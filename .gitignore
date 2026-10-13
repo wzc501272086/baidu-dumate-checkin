@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 环境变量与密钥(务必忽略, 防止 Cookie 泄露)
+.env
+.env.*
+
+# 本地抓包辅助脚本输出(接口探测结果, 不含 Cookie 但也不应提交)
+dummy_capture_result.json
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

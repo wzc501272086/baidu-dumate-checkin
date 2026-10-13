@@ -1,0 +1,57 @@
+name: Baidu Duzi Daily Check-in
+
+# 每日自动签到百度搭子(DuMate)
+# 触发方式:
+#   1. schedule: 每天 UTC 01:05 触发, 约等于北京时间 09:05 (可自行调整)
+#   2. workflow_dispatch: 手动触发, 用于首次部署后立即验证
+on:
+  schedule:
+    - cron: "5 1 * * *"
+  workflow_dispatch:
+
+# 仅需读取仓库内容, 使用最小权限
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-checkin
+  cancel-in-progress: false
+
+jobs:
+  checkin:
+    name: Daily Check-in
+    runs-on: ubuntu-latest
+    # 超时保护: 即使签到接口挂起, 任务最多运行 10 分钟
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 执行百度搭子每日签到
+        env:
+          # 方式一(推荐): 百度账号密码, 脚本自动登录后签到
+          DUMATE_USERNAME: ${{ secrets.DUMATE_USERNAME }}
+          DUMATE_PASSWORD: ${{ secrets.DUMATE_PASSWORD }}
+          # 方式二(回退): 手动 Cookie, 账号登录不可用时使用
+          DUMATE_COOKIE: ${{ secrets.DUMATE_COOKIE }}
+          # 可选: 签到接口地址, 默认自动探测候选列表; 建议用抓包实测地址覆盖
+          DUMATE_CHECKIN_URL: ${{ secrets.DUMATE_CHECKIN_URL }}
+          # 可选: 签到请求方法 GET/POST, 默认 POST
+          DUMATE_CHECKIN_METHOD: ${{ secrets.DUMATE_CHECKIN_METHOD }}
+          # 可选: 通知 Webhook(如 Server酱/PushPlus/企业微信机器人),
+          # 配置后签到结果会推送到该地址
+          DUMATE_NOTIFY_URL: ${{ secrets.DUMATE_NOTIFY_URL }}
+        run: python src/checkin.py
