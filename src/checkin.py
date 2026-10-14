@@ -77,6 +77,22 @@ def notify(message: str, webhook: str) -> None:
         print(f"[warn] 通知发送失败(不影响签到结果): {exc}")
 
 
+def serverchan_notify(title: str, desp: str) -> None:
+    """通过 Server 酱(新版 sctapi.ftqq.com)推送通知(失败不影响流程)."""
+    sendkey = env("SCT_SEND_KEY")
+    if not sendkey:
+        return
+    url = f"https://sctapi.ftqq.com/{sendkey}.send"
+    try:
+        resp = requests.post(url, data={"title": title, "desp": desp}, timeout=REQUEST_TIMEOUT)
+        if resp.status_code == 200:
+            print("[info] Server 酱推送成功")
+        else:
+            print(f"[warn] Server 酱推送返回 HTTP {resp.status_code}: {resp.text[:200]}")
+    except requests.RequestException as exc:
+        print(f"[warn] Server 酱推送失败(不影响签到结果): {exc}")
+
+
 def summarize_response(resp: requests.Response) -> str:
     """把接口响应整理成可读摘要."""
     text = resp.text or ""
@@ -239,11 +255,13 @@ def main() -> int:
         summary = "百度搭子签到成功 (HTTP 2xx)"
         print(f"[done] {summary}")
         notify(summary, notify_url)
+        serverchan_notify("百度搭子签到成功", summary)
         return 0
 
     summary = "百度搭子签到失败, 请检查凭据是否有效或签到接口地址是否正确"
     print(f"[failed] {summary}", file=sys.stderr)
     notify(summary, notify_url)
+    serverchan_notify("百度搭子签到失败", summary)
     return 1
 
 

@@ -49,9 +49,20 @@ baidu-dumate-checkin/
 | `DUMATE_COOKIE` | 备用 | 手动 Cookie(仅在账号登录不可用时需要) |
 | `DUMATE_CHECKIN_URL` | 可选 | 签到接口地址(未填时脚本自动探测) |
 | `DUMATE_CHECKIN_METHOD` | 可选 | 请求方法 `GET` 或 `POST`，默认 `POST` |
-| `DUMATE_NOTIFY_URL` | 可选 | 通知 Webhook(Server酱/PushPlus/企业微信机器人) |
+| `DUMATE_NOTIFY_URL` | 可选 | 通用通知 Webhook(Server酱旧版/PushPlus/企业微信机器人等) |
+| `SCT_SEND_KEY` | 可选 | [Server 酱](https://sct.ftqq.com/) SendKey，失败时推送微信通知 |
 
 > 填 `DUMATE_USERNAME` + `DUMATE_PASSWORD` 即完成最小配置。脚本运行时会通过百度通行证接口自动登录、获取会话凭据(Bduss/Stoken)，然后签到，**全程无需手动抓包**。
+
+### 1.1 配置 Server 酱微信提醒（可选）
+
+若希望**签到失败时**收到微信通知，可启用 [Server 酱](https://sct.ftqq.com/)：
+
+1. 打开 [https://sct.ftqq.com/](https://sct.ftqq.com/)，微信扫码登录；
+2. 复制页面上的 **SendKey**（格式如 `SCTxxxxT`）；
+3. 在 GitHub Secrets 新增 `SCT_SEND_KEY`，填入该 SendKey。
+
+> 说明：Server 酱只会在**签到失败**时推送提醒，成功时不打扰。
 
 ### 2. 推送代码并验证
 

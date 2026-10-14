@@ -54,4 +54,6 @@ jobs:
           # 可选: 通知 Webhook(如 Server酱/PushPlus/企业微信机器人),
           # 配置后签到结果会推送到该地址
           DUMATE_NOTIFY_URL: ${{ secrets.DUMATE_NOTIFY_URL }}
+          # 可选: Server 酱 SendKey(新版 sctapi.ftqq.com), 失败时推送微信通知
+          SCT_SEND_KEY: ${{ secrets.SCT_SEND_KEY }}
         run: python src/checkin.py
