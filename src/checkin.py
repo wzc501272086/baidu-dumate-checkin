@@ -180,9 +180,12 @@ def try_checkin(cookie: str, url: str, method: str, session: requests.Session) -
     if resp.status_code == 401 or resp.status_code == 403:
         print(f"[error] 鉴权失败(Http {resp.status_code}), 凭据可能已失效: {summary}")
         return False
-    if resp.status_code >= 500:
-        print(f"[warn] 服务端错误(Http {resp.status_code}), 尝试下一个候选接口")
-        return False if looks_success(resp) is False else True
+    if resp.status_code >= 400:
+        # 4xx/5xx 默认失败; 若响应体明确含成功标记则兜底通过(已签过等场景)
+        if looks_success(resp):
+            return True
+        print(f"[warn] 请求失败(Http {resp.status_code}), 尝试下一个候选接口: {summary}")
+        return False
 
     print(f"[info] 响应内容: {summary}")
     return True
