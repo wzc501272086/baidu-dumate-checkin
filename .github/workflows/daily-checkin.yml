@@ -42,11 +42,14 @@ jobs:
 
       - name: 执行百度搭子每日签到
         env:
-          # 方式一(推荐): 百度账号密码, 脚本自动登录后签到
+          # 方式一(推荐): 多账号 Cookie, 一次运行逐个签到
+          # 支持多种写法: JSON 数组, 或多行文本(每行 "账号标签|Cookie" 或纯 Cookie)
+          DUMATE_COOKIES: ${{ secrets.DUMATE_COOKIES }}
+          # 方式二(兼容): 单账号 Cookie
+          DUMATE_COOKIE: ${{ secrets.DUMATE_COOKIE }}
+          # 方式三(回退): 百度账号密码自动登录(单账号, CI 环境可能触发风控)
           DUMATE_USERNAME: ${{ secrets.DUMATE_USERNAME }}
           DUMATE_PASSWORD: ${{ secrets.DUMATE_PASSWORD }}
-          # 方式二(回退): 手动 Cookie, 账号登录不可用时使用
-          DUMATE_COOKIE: ${{ secrets.DUMATE_COOKIE }}
           # 可选: 签到接口地址, 默认自动探测候选列表; 建议用抓包实测地址覆盖
           DUMATE_CHECKIN_URL: ${{ secrets.DUMATE_CHECKIN_URL }}
           # 可选: 签到请求方法 GET/POST, 默认 POST

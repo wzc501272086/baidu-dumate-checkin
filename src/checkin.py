@@ -5,28 +5,37 @@
 ==================================
 
 功能:
-  - 优先使用百度账号密码自动登录(DUMATE_USERNAME + DUMATE_PASSWORD),
-    全程免手动抓包, 登录后自动携带会话 Cookie 调用签到接口;
-  - 兼容手动 Cookie 模式(DUMATE_COOKIE), 账号密码登录不可用时回退;
+  - 支持多账号签到: 通过 DUMATE_COOKIES 配置多个账号的 Cookie,
+    一次运行逐个签到并汇总每个账号的结果;
+  - 兼容单账号: DUMATE_COOKIE 单账号 Cookie, 或
+    DUMATE_USERNAME + DUMATE_PASSWORD 自动登录(CI 环境可能触发风控);
   - 签到接口自动探测: 从候选接口列表逐个尝试, 支持用户用
     DUMATE_CHECKIN_URL 指定真实接口(自抓包替代方案);
-  - 校验响应状态并输出可读结果; 可选 Webhook 通知。
+  - 校验响应状态并输出可读结果; 任一账号失败时通过 Server 酱/Webhook 通知。
 
 认证模式(按优先级):
-  1. DUMATE_USERNAME + DUMATE_PASSWORD -> 自动登录
-  2. DUMATE_COOKIE -> 使用手动 Cookie
+  1. DUMATE_COOKIES    -> 多账号 Cookie(推荐)
+  2. DUMATE_COOKIE     -> 单账号 Cookie(向后兼容)
+  3. DUMATE_USERNAME + DUMATE_PASSWORD -> 自动登录(单账号)
+
+DUMATE_COOKIES 支持的格式:
+  a) JSON 数组: ["cookieA", "cookieB"]
+     或 [{"name": "账号A", "cookie": "..."}, ...]
+  b) 多行文本: 每行一个 Cookie; 可写成 "账号标签|cookie" 便于区分
 
 环境变量(通过 GitHub Secrets 配置):
-  DUMATE_USERNAME       可选, 百度账号
+  DUMATE_COOKIES        可选, 多账号 Cookie(见上)
+  DUMATE_COOKIE         可选, 单账号 Cookie(向后兼容)
+  DUMATE_USERNAME       可选, 百度账号(单账号自动登录)
   DUMATE_PASSWORD       可选, 百度密码(与 USERNAME 成对使用)
-  DUMATE_COOKIE         可选, 手动 Cookie(账号密码不可用时回退)
   DUMATE_CHECKIN_URL    可选, 显式指定签到接口; 未指定则从候选列表探测
   DUMATE_CHECKIN_METHOD 可选, GET 或 POST; 默认 POST
-  DUMATE_NOTIFY_URL     可选, 通知 Webhook 地址
+  DUMATE_NOTIFY_URL     可选, 通用通知 Webhook 地址
+  SCT_SEND_KEY          可选, Server 酱 SendKey(失败时微信提醒)
 
 退出码:
-  0  签到成功或已签过
-  1  认证失败 / 签到请求失败 / 鉴权失效 / 缺少必需凭据
+  0  全部账号签到成功或已签过
+  1  存在账号签到失败 / 认证失败 / 缺少必需凭据
   2  其它内部错误
 """
 
@@ -36,7 +45,7 @@ import json
 import os
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -164,6 +173,91 @@ def resolve_cookie() -> Optional[str]:
         return None
 
 
+# ---------------------------------------------------------------- 多账号
+
+def parse_accounts() -> List[Tuple[str, str]]:
+    """
+    解析待签到的账号列表, 每项为 (账号标签, Cookie)。
+
+    来源(按优先级):
+      1. DUMATE_COOKIES: 多账号, 支持
+         a) JSON 数组: ["cookieA", "cookieB"]
+            或 [{"name": "账号A", "cookie": "..."}, ...]
+         b) 多行文本: 每行一个 Cookie, 可写 "账号标签|cookie"
+      2. DUMATE_COOKIE: 单账号 Cookie(向后兼容)
+
+    返回去重后的账号列表; 空列表表示没有可用的 Cookie 账号。
+    """
+    accounts: List[Tuple[str, str]] = []
+
+    def add(label: str, cookie: str) -> None:
+        cookie = (cookie or "").strip()
+        if cookie:
+            accounts.append((label, cookie))
+
+    raw = env("DUMATE_COOKIES")
+    if raw:
+        parsed_json = False
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            data = None
+
+        if isinstance(data, (list, dict)):
+            parsed_json = True
+            items = data if isinstance(data, list) else [data]
+            for idx, item in enumerate(items, 1):
+                if isinstance(item, str):
+                    add(f"账号{idx}", item)
+                elif isinstance(item, dict):
+                    cookie = str(item.get("cookie") or item.get("cookie_str") or "")
+                    label = str(item.get("name") or item.get("label") or f"账号{idx}")
+                    add(label, cookie)
+            if not accounts:
+                print("[warn] DUMATE_COOKIES 为 JSON 但未解析出有效 Cookie")
+
+        if not parsed_json:
+            for idx, line in enumerate(raw.splitlines(), 1):
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "|" in line:
+                    label, _, cookie = line.partition("|")
+                    add(label.strip() or f"账号{idx}", cookie)
+                else:
+                    add(f"账号{idx}", line)
+
+    if not accounts:
+        add("账号1", env("DUMATE_COOKIE"))
+
+    # 按 Cookie 去重, 保留首次出现的标签
+    seen: set = set()
+    unique: List[Tuple[str, str]] = []
+    for label, cookie in accounts:
+        if cookie in seen:
+            continue
+        seen.add(cookie)
+        unique.append((label, cookie))
+    return unique
+
+
+def resolve_accounts() -> List[Tuple[str, str]]:
+    """
+    解析本轮所有待签到账号。
+
+    优先使用 Cookie 账号列表; 未配置任何 Cookie 时, 回退到
+    账号密码自动登录(单账号)。
+    """
+    accounts = parse_accounts()
+    if accounts:
+        return accounts
+
+    cookie = resolve_cookie()
+    if cookie:
+        return [("账号1", cookie)]
+    return []
+
+
 # ---------------------------------------------------------------- 签到
 
 def try_checkin(cookie: str, url: str, method: str, session: requests.Session) -> bool:
@@ -234,34 +328,48 @@ def do_checkin(cookie: str, url_override: str, method: str, session: requests.Se
 # ---------------------------------------------------------------- 入口
 
 def main() -> int:
-    cookie = resolve_cookie()
-    if not cookie:
-        return 1
-
     url_override = env("DUMATE_CHECKIN_URL")
     method = env("DUMATE_CHECKIN_METHOD", DEFAULT_METHOD).upper()
     if method not in ("GET", "POST"):
         print(f"[error] DUMATE_CHECKIN_METHOD 仅支持 GET/POST, 当前值: {method}", file=sys.stderr)
         return 2
 
+    accounts = resolve_accounts()
+    if not accounts:
+        return 1
+
     notify_url = env("DUMATE_NOTIFY_URL")
     print(f"[info] 开始百度搭子每日签到 | 时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[info] 认证模式: {'账号密码自动登录' if env('DUMATE_USERNAME') and env('DUMATE_PASSWORD') else '手动 Cookie'}")
+    print(f"[info] 待签到账号数: {len(accounts)}")
 
     session = requests.Session()
-    ok = do_checkin(cookie, url_override, method, session)
+    results: List[Tuple[str, bool]] = []
+    for idx, (label, cookie) in enumerate(accounts, 1):
+        print(f"[info] ======== 账号 {idx}/{len(accounts)}: {label} ========")
+        ok = do_checkin(cookie, url_override, method, session)
+        results.append((label, ok))
+        print(f"[{'done' if ok else 'failed'}] {label} 签到{'成功' if ok else '失败'}")
+        if idx < len(accounts):
+            # 轻微间隔, 降低并发触发的风控概率
+            time.sleep(2)
 
-    if ok:
-        summary = "百度搭子签到成功 (HTTP 2xx)"
+    success = [label for label, ok in results if ok]
+    failed = [label for label, ok in results if not ok]
+    total = len(results)
+
+    lines = [f"共 {total} 个账号: 成功 {len(success)}, 失败 {len(failed)}"]
+    lines.extend(f"{'[OK]' if ok else '[FAIL]'} {label}" for label, ok in results)
+    summary = "\n".join(lines)
+
+    if not failed:
         print(f"[done] {summary}")
         notify(summary, notify_url)
         serverchan_notify("百度搭子签到成功", summary)
         return 0
 
-    summary = "百度搭子签到失败, 请检查凭据是否有效或签到接口地址是否正确"
     print(f"[failed] {summary}", file=sys.stderr)
     notify(summary, notify_url)
-    serverchan_notify("百度搭子签到失败", summary)
+    serverchan_notify(f"百度搭子签到失败({len(failed)}/{total})", summary)
     return 1
 
 
