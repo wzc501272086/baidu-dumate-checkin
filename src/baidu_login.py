@@ -30,7 +30,10 @@ import time
 from typing import Dict, List, Optional
 
 import requests
-import rsa
+
+# 说明: rsa 仅在账号密码登录(encrypt_password)时按需导入。
+# 手动 Cookie 签到不需要该依赖, 因此不在此处做模块级导入,
+# 便于在未安装 rsa 的环境里直接运行/测试签到主流程。
 
 PASSPORT_BASE = "https://passport.baidu.com"
 PUBLIC_KEY_URL = PASSPORT_BASE + "/v2/getpublickey"
@@ -122,6 +125,14 @@ def get_login_token(session: requests.Session) -> str:
 
 def encrypt_password(pubkey_pem: str, password: str) -> str:
     """使用服务端 RSA 公钥加密密码(百度通行证流程)."""
+    try:
+        import rsa
+    except ImportError as exc:
+        raise BaiduLoginError(
+            "缺少依赖 rsa: 账号密码自动登录需要它; 如只用手动 Cookie 签到可以忽略。"
+            "安装方式: pip install rsa"
+        ) from exc
+
     try:
         pub = rsa.PublicKey.load_pkcs1_openssl_pem(pubkey_pem.encode("utf-8"))
     except Exception as exc:

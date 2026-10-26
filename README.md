@@ -11,7 +11,7 @@ GitHub Actions (cron 定时)
         │  每天 UTC 01:05 触发(北京时间 09:05)
         ▼
 运行 Python 脚本 (src/checkin.py)
-        │  认证优先级: ① 多账号 Cookie  ② 单账号 Cookie  ③ 账号密码自动登录
+        │  认证: ① 多账号 Cookie ② 单账号 Cookie(两者同时配置时都签到) ③ 账号密码自动登录
         ▼
 逐个账号调用百度搭子签到接口
         │
@@ -45,7 +45,7 @@ baidu-dumate-checkin/
 | Secret 名称 | 是否必需 | 说明 |
 | --- | --- | --- |
 | `DUMATE_COOKIES` | 推荐 | 多账号 Cookie，一次签多个账号（填写格式见下） |
-| `DUMATE_COOKIE` | 兼容 | 单账号 Cookie，未配置 `DUMATE_COOKIES` 时生效 |
+| `DUMATE_COOKIE` | 兼容 | 单账号 Cookie；**与 `DUMATE_COOKIES` 同时配置时两份都会签到**（按 Cookie 去重），只想用一份请清空另一个 |
 | `DUMATE_USERNAME` | 回退 | 百度账号（仅未配置任何 Cookie 时生效，CI 可能触发风控） |
 | `DUMATE_PASSWORD` | 回退 | 百度密码（与 `DUMATE_USERNAME` 成对） |
 | `DUMATE_CHECKIN_URL` | 可选 | 签到接口地址(未填时脚本自动探测) |
@@ -60,9 +60,11 @@ baidu-dumate-checkin/
 **方式 A：多行文本（最直观）** —— 每行一个账号，推荐写成 `账号标签|Cookie`：
 
 ```
-主号|BDUSS=xxxxx; STOKEN=yyyyy; ...
-小号|BDUSS=aaaaa; STOKEN=bbbbb; ...
+主号|BIDUPSID=xxxxx; BAIDUID=yyyyy; BDUSS=zzzzz; ...
+小号|BIDUPSID=aaaaa; BAIDUID=bbbbb; BDUSS=ccccc; ...
 ```
+
+> **注意：必须粘贴完整 Cookie 串**（通常 1000 字符以上，至少包含 `BDUSS`、`BIDUPSID`、`BAIDUID`）。只粘贴 `BDUSS=...` 一段属于高风险写法：脚本会在日志里给出 `Cookie 形态可疑` 告警，若因此收到 `HTTP 401 / {"code":10001,"message":"登录已经过期"}`，请重新粘贴完整串。
 
 不写标签也可以，脚本会自动编号为「账号1、账号2…」：
 
@@ -93,7 +95,7 @@ BDUSS=aaaaa; STOKEN=bbbbb; ...
 1. 用该账号在浏览器登录 [https://dumate.baidu.com](https://dumate.baidu.com)；
 2. 按 `F12` 打开开发者工具 → **Network（网络）** 标签；
 3. 刷新页面，随便点开一个请求 → **Headers → Request Headers → Cookie**；
-4. 复制整段 Cookie（通常包含 `BDUSS`、`STOKEN` 等），作为该账号的 Cookie 填入。
+4. **复制整段 Cookie**（从 `BIDUPSID=` 开始到最后一个 `;`，通常 1000 字符以上；至少包含 `BDUSS`、`BIDUPSID`、`BAIDUID`），作为该账号的 Cookie 填入。**不要只复制 `BDUSS=...` 一段**。
 
 对每个账号重复上述步骤，一行一个写入 `DUMATE_COOKIES`。
 
@@ -137,6 +139,7 @@ python src/capture_helper.py --cookie "手动Cookie字符串"
 | 场景 | 行为 |
 | --- | --- |
 | 配置了 `DUMATE_COOKIES` | 依次为列出的每个账号签到，并汇总每个账号的结果 |
+| 同时配置 `DUMATE_COOKIES` 与 `DUMATE_COOKIE` | 两份凭据**都会**参与签到（按 Cookie 去重），日志逐个账号标注 `凭据来源`，不会静默忽略其中一份 |
 | 只配置 `DUMATE_COOKIE` | 签到单个账号 |
 | 只配置账号密码 | 自动登录后签到单个账号；被验证码/风控拦截时报错退出 |
 | 无任何凭据 | 报错退出(退出码 1)，可通过 Server 酱/Webhook 获知 |
@@ -177,15 +180,18 @@ DUMATE_COOKIES="主号|BDUSS=xxx
 | 现象 | 原因与处理 |
 | --- | --- |
 | 日志提示 `缺少凭据` | 未配置 Secrets，或 Secret 名写错(注意大小写) |
-| 只有部分账号成功 | 失败账号多为 Cookie 过期；日志与 Server 酱提醒会标出失败账号，更新对应的 Cookie 即可 |
-| HTTP 401 或提示 `登录已经过期` | 该账号 Cookie 已过期，重新抓取并更新 `DUMATE_COOKIES` 中对应行 |
-| 提示 `所有候选接口均未确认成功` | 未配置真实接口；在本机运行 `capture_helper.py` 抓取后填 `DUMATE_CHECKIN_URL` |
+| **同一个 Cookie：单账号能签、多账号(401)** | 两份 Secret 里存的不是同一份凭据——常见情况是 `DUMATE_COOKIE` 已更新成新 Cookie，而 `DUMATE_COOKIES` 还留着旧的那行（旧 Cookie 已失效）。现在脚本会**两份都签到**并逐个账号打印 `凭据来源` 与 `凭据形态`，据此把过期的那一份也更新为最新完整 Cookie（或直接清空不用的那个 Secret）即可 |
+| 只有部分账号成功 | 失败账号多为 Cookie 过期；日志与 Server 酱提醒会标出失败账号及其 `凭据来源`，更新对应 Cookie 即可 |
+| HTTP 401 或提示 `登录已经过期` | 先看日志里的 `本次实际发送的 Cookie 形态` 与 `关键字段长度`：若缺 `BIDUPSID`/`BAIDUID` 或长度明显偏短，说明 Cookie 只粘了一段，需粘贴完整串（通常 1000 字符以上）；若形态完整仍 401，则是该账号 Cookie 已过期，重新登录后抓取完整串并更新对应 Secret |
+| 日志出现 `Cookie 形态问题` | 脚本已自动校验 Cookie 形态（缺 `BDUSS`/`BIDUPSID`/`BAIDUID`、长度明显偏短、字段名混入账号标签）；缺 `BDUSS` 时脚本会直接报错且**不再发请求**，其余情况按提示重新粘贴完整 Cookie |
+| 日志提示 `所有候选接口均未确认成功` | 未配置真实接口；在本机运行 `capture_helper.py` 抓取后填 `DUMATE_CHECKIN_URL` |
 | 工作流未按时触发 | 检查 cron 是否为 UTC 时区、仓库是否处于活跃状态 |
 
 ## 安全说明
 
 - Cookie 与账号密码都属于敏感凭据，**只**应存放在 GitHub Secret(`Settings → Secrets → Actions`)中，写入后 GitHub 不会明文展示；
 - 多账号 Cookie 同样放在 `DUMATE_COOKIES` 这一个 Secret 中，请勿写入代码或提交到仓库；
+- 脚本日志只打印 Cookie 的**字段名与长度**（如 `BDUSS=192`），不打印任何取值，可放心把 Actions 日志贴给别人排查；
 - 本仓库的 `.gitignore` 已忽略 `.env*` 和 `dummy_capture_result.json`，提交前请确认未误传；
 - 建议定期修改密码并留意账号登录设备记录，降低凭据泄露风险。
 
